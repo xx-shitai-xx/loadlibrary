@@ -5,6 +5,7 @@
 #include <search.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "winnt_types.h"
 #include "pe_linker.h"

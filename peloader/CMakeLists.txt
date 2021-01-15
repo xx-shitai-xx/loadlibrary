@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.17)
-project(GraalEngine-loader C CXX)
+project(peloader CXX)
 
 #set(CMAKE_DEBUG_POSTFIX _d)
 
@@ -28,7 +28,6 @@ string(TOLOWER ${PROJECT_NAME} PROJECT_NAME_LOWER)
 
 # Additional CMake modules
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake)
-set(BUILD_SHARED_LIBS FALSE CACHE BOOL "-" FORCE)
 
 # Version number in format X.YY.ZZ
 set(VER_X 1)
@@ -41,20 +40,14 @@ set(VER_FULL "${VER_X}.${VER_Y}.${VER_Z}${VER_EXTRA}")
 STRING(REGEX REPLACE " " "-" VER_CPACK ${VER_FULL})
 
 set(CMAKE_CXX_STANDARD 14)
+file(GLOB PELOADER_SOURCES *.c *.h winapi/*.c winapi/*.h)
 
-add_subdirectory(peloader)
+add_library(${PROJECT_NAME} ${PELOADER_SOURCES})
 
-file(GLOB GSERVERNW_SOURCES src/mpclient.c)
-
-add_executable(${PROJECT_NAME} ${GSERVERNW_SOURCES})
-
-target_link_directories(${PROJECT_NAME} PRIVATE peloader/lib)
-
-target_include_directories(${PROJECT_NAME} PRIVATE "include/" "intercept/" "peloader/" "./")
+target_include_directories(${PROJECT_NAME} PUBLIC "include/" "intercept/" "peloader/" "./")
 target_compile_definitions(${PROJECT_NAME} PRIVATE -D_GNU_SOURCE)
 target_compile_options(${PROJECT_NAME} PRIVATE -march=native -ggdb3 -m32 -std=gnu99 -fshort-wchar -Wno-multichar -mstackrealign)
-target_link_libraries(${PROJECT_NAME} PUBLIC m)
-target_link_options(${PROJECT_NAME} PRIVATE -m32 -Wl,--dynamic-list=${PROJECT_SOURCE_DIR}/exports.lst -Wl,--whole-archive,${PROJECT_SOURCE_DIR}/peloader/lib/libpeloader.a,--no-whole-archive -march=native -ggdb3 -std=gnu99 -fshort-wchar -Wno-multichar -mstackrealign)
-add_dependencies(${PROJECT_NAME} peloader)
+target_link_libraries(${PROJECT_NAME} PRIVATE m )
+target_link_options(${PROJECT_NAME} PRIVATE -m32 -Wl,--dynamic-list=${PROJECT_SOURCE_DIR}/exports.lst -march=native -ggdb3 -std=gnu99 -fshort-wchar -Wno-multichar -mstackrealign)
 
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})

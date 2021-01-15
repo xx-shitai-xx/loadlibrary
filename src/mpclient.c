@@ -26,6 +26,7 @@
 #include <mcheck.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <unistd.h>
 
 #include "log.h"
 #include "winnt_types.h"
@@ -253,6 +254,8 @@ std::string ExePath() {
 
 int main(int argc, char **argv, char **envp)
 {
+	PIMAGE_DOS_HEADER DosHeader;
+	PIMAGE_NT_HEADERS PeHeader;
     BOOL result;
     PVOID jsint;
     JSINT_PARAMS jsparams = {
@@ -265,20 +268,44 @@ int main(int argc, char **argv, char **envp)
         .name   = "GraalEngine.dll",
     };
 
-	graalprint ("Enable pedantic heap checking.");
+	graalprint("Enable pedantic heap checking.");
     //mcheck_pedantic(0);
 
-	graalprint ("Load the scan engine");
+	graalprint("Load the scan engine");
     // Load the scan engine.
 
     if (pe_load_library(image.name, &image.image, &image.size) == false) {
         return 1;
     }
 
-    // .
-	graalprint ("Handle relocations, imports, etc");
-
+    graalprint("Handle relocations, imports, etc");
 	link_pe_images(&image, 1);
+
+	// Fetch the headers to get base offsets.
+	DosHeader   = (PIMAGE_DOS_HEADER) image.image;
+	PeHeader    = (PIMAGE_NT_HEADERS)(image.image + DosHeader->e_lfanew);
+
+	// Load any additional exports.
+	if (!process_extra_exports(image.image, PeHeader->OptionalHeader.BaseOfCode, "graalengine.map")) {
+#ifndef NDEBUG
+		LogMessage("The map file wasn't found, symbols wont be available");
+#endif
+	} else {
+		// Calculate the commands needed to get export and map symbols visible in gdb.
+		if (IsDebuggerPresent()) {
+			LogMessage("GDB: add-symbol-file %s %#x+%#x",
+					   image.name,
+					   image.image,
+					   PeHeader->OptionalHeader.BaseOfCode);
+			LogMessage("GDB: shell bash genmapsym.sh %#x+%#x symbols_%d.o < %s",
+					   image.image,
+					   PeHeader->OptionalHeader.BaseOfCode,
+					   getpid(),
+					   "graalengine.map");
+			LogMessage("GDB: add-symbol-file symbols_%d.o 0", getpid());
+			__debugbreak();
+		}
+	}
 
 	graalprint("Get pointer for graal_setLogGraalMessage");
     if (get_export("graal_setLogGraalMessage", &graal_setLogGraalMessage)) {

@@ -9,3 +9,5 @@ avscript
 eicar.com
 .gradle/
 .idea/
+bin/GraalEngine-loader
+bin/GraalEngine.dll
