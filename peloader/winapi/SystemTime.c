@@ -11,16 +11,7 @@
 #include "winexports.h"
 #include "util.h"
 
-typedef struct _SYSTEMTIME {
-  WORD wYear;
-  WORD wMonth;
-  WORD wDayOfWeek;
-  WORD wDay;
-  WORD wHour;
-  WORD wMinute;
-  WORD wSecond;
-  WORD wMilliseconds;
-} SYSTEMTIME, *PSYSTEMTIME;
+
 
 extern void WINAPI SetLastError(DWORD dwErrCode);
 

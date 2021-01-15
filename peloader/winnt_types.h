@@ -162,7 +162,11 @@ typedef uint64_t    ULONGULONG;
 typedef uint64_t    ULONG64;
 typedef uint64_t    QWORD, *PQWORD;
 typedef uint16_t    WCHAR, *PWCHAR;
+typedef char* PSTR, *LPSTR;
+typedef const char* LPCSTR;
+
 typedef HANDLE     *PHANDLE;
+typedef HANDLE HWND;
 
 typedef CHAR CCHAR;
 typedef SHORT CSHORT;
@@ -192,8 +196,34 @@ typedef ULONG SECURITY_INFORMATION;
 typedef struct _FILETIME {
   DWORD dwLowDateTime;
   DWORD dwHighDateTime;
-} FILETIME, *PFILETIME;
+} FILETIME, *PFILETIME, LPFILETIME;
 
+#define MAX_PATH 260
+typedef struct _WIN32_FIND_DATAA {
+	DWORD    dwFileAttributes;
+	FILETIME ftCreationTime;
+	FILETIME ftLastAccessTime;
+	FILETIME ftLastWriteTime;
+	DWORD    nFileSizeHigh;
+	DWORD    nFileSizeLow;
+	DWORD    dwReserved0;
+	DWORD    dwReserved1;
+	CHAR     cFileName[MAX_PATH];
+	CHAR     cAlternateFileName[14];
+	DWORD    dwFileType;
+	DWORD    dwCreatorType;
+	WORD     wFinderFlags;
+} WIN32_FIND_DATAA, *PWIN32_FIND_DATAA, *LPWIN32_FIND_DATAA;
+typedef struct _SYSTEMTIME {
+	WORD wYear;
+	WORD wMonth;
+	WORD wDayOfWeek;
+	WORD wDay;
+	WORD wHour;
+	WORD wMinute;
+	WORD wSecond;
+	WORD wMilliseconds;
+} SYSTEMTIME, *PSYSTEMTIME, *LPSYSTEMTIME;
 typedef struct ansi_string {
         USHORT length;
         USHORT max_length;

@@ -160,7 +160,7 @@ static HANDLE WINAPI CreateFileW(PWCHAR lpFileName, DWORD dwDesiredAccess, DWORD
 }
 
 /**
- * TODO: handle 64 bit 
+ * TODO: handle 64 bit
  */
 static DWORD WINAPI SetFilePointer(HANDLE hFile, LONG liDistanceToMove,  LONG *lpDistanceToMoveHigh, DWORD dwMoveMethod)
 {
@@ -195,7 +195,7 @@ static BOOL WINAPI SetFilePointerEx(HANDLE hFile, uint64_t liDistanceToMove,  ui
 
     // Windows is permissive here.
     return TRUE;
-    //return result != -1; 
+    //return result != -1;
 }
 
 static BOOL WINAPI CloseHandle(HANDLE hObject)
@@ -259,6 +259,21 @@ static HANDLE WINAPI FindFirstFileW(PWCHAR lpFileName, PVOID lpFindFileData)
     return INVALID_HANDLE_VALUE;
 }
 
+STATIC HANDLE WINAPI FindFirstFileA(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFindFileData)
+{
+    //char *name = CreateAnsiFromWide(lpFileName);
+
+    //printf("%s [%s], %p\n", lpFileName, name, lpFindFileData);
+
+	printf("%s\n", lpFileName);
+
+    //free(name);
+    memset((void*)lpFindFileData, 1, sizeof(LPWIN32_FIND_DATAA));
+    SetLastError(ERROR_FILE_NOT_FOUND);
+
+    return 0;//(HANDLE)'FILE';
+};
+
 static DWORD WINAPI NtOpenSymbolicLinkObject(PHANDLE LinkHandle, DWORD DesiredAccess, PVOID ObjectAttributes)
 {
     *LinkHandle = (HANDLE) 'SYMB';
@@ -308,6 +323,16 @@ static DWORD WINAPI GetFullPathNameW(
 {
     DebugLog("");
     return 0;
+}
+
+static DWORD WINAPI GetFullPathNameA(
+		PWCHAR lpFileName,
+DWORD   nBufferLength,
+		PWCHAR  lpBuffer,
+PWCHAR  *lpFilePart)
+{
+printf("%s\n", lpFileName);
+return 0;
 }
 
 static BOOL SetEndOfFile(HANDLE hFile)
@@ -362,12 +387,16 @@ DECLARE_CRT_EXPORT("WriteFile", WriteFile);
 DECLARE_CRT_EXPORT("DeleteFileW", DeleteFileW);
 DECLARE_CRT_EXPORT("GetFileSizeEx", GetFileSizeEx);
 DECLARE_CRT_EXPORT("FindFirstFileW", FindFirstFileW);
+DECLARE_CRT_EXPORT("FindFirstFileA", FindFirstFileA);
+
 DECLARE_CRT_EXPORT("NtOpenSymbolicLinkObject", NtOpenSymbolicLinkObject);
 DECLARE_CRT_EXPORT("NtQuerySymbolicLinkObject", NtQuerySymbolicLinkObject);
 DECLARE_CRT_EXPORT("NtClose", NtClose);
 DECLARE_CRT_EXPORT("DeviceIoControl", DeviceIoControl);
 DECLARE_CRT_EXPORT("NtQueryVolumeInformationFile", NtQueryVolumeInformationFile);
 DECLARE_CRT_EXPORT("GetFullPathNameW", GetFullPathNameW);
+DECLARE_CRT_EXPORT("GetFullPathNameA", GetFullPathNameA);
+
 DECLARE_CRT_EXPORT("SetEndOfFile", SetEndOfFile);
 DECLARE_CRT_EXPORT("QueryDosDeviceW", QueryDosDevice);
 DECLARE_CRT_EXPORT("GetDiskFreeSpaceExW", GetDiskFreeSpaceExW);

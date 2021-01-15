@@ -258,13 +258,13 @@ static int import(void *image, IMAGE_IMPORT_DESCRIPTOR *dirent, char *dll)
         void ordinal_import_stub(void)
         {
             warnx("function at %p attempted to call a symbol imported by ordinal", __builtin_return_address(0));
-            __debugbreak();
+            //__debugbreak();
         }
 
         void unknown_symbol_stub(void)
         {
-            warnx("function at %p attempted to call an unknown symbol", __builtin_return_address(0));
-            __debugbreak();
+            warnx("function at %p attempted to call an unknown symbol", __builtin_return_address(0) );
+            //__debugbreak();
         }
 
         lookup_tbl = RVA2VA(image, dirent->u.OriginalFirstThunk, ULONG_PTR *);
@@ -272,7 +272,7 @@ static int import(void *image, IMAGE_IMPORT_DESCRIPTOR *dirent, char *dll)
 
         for (i = 0; lookup_tbl[i]; i++) {
                 if (IMAGE_SNAP_BY_ORDINAL(lookup_tbl[i])) {
-                        ERROR("ordinal import not supported: %llu", (uint64_t)lookup_tbl[i]);
+						//printf("ordinal import not supported: %llu\n", (uint64_t)lookup_tbl[i]);
                         address_tbl[i] = (ULONG) ordinal_import_stub;
                         continue;
                 }
@@ -281,12 +281,12 @@ static int import(void *image, IMAGE_IMPORT_DESCRIPTOR *dirent, char *dll)
                 }
 
                 if (get_export(symname, &adr) < 0) {
-                        ERROR("unknown symbol: %s:%s", dll, symname);
+                        printf("unknown symbol: %s:%s\n", dll, symname);
                         address_tbl[i] = (ULONG) unknown_symbol_stub;
                         continue;
                 } else {
-                        //DBGLINKER("found symbol: %s:%s: addr: %p, rva = %llu",
-                        //          dll, symname, adr, (uint64_t)address_tbl[i]);
+					//printf("found symbol: %s:%s: addr: %p, rva = %llu\n",
+                    //              dll, symname, adr, (uint64_t)address_tbl[i]);
                         address_tbl[i] = (ULONG_PTR)adr;
                 }
         }

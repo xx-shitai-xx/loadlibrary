@@ -42,6 +42,18 @@ UINT WINAPI GetDriveTypeW(PWCHAR lpRootPathName)
     return DRIVE_FIXED;
 }
 
+
+UINT WINAPI GetDriveTypeA(LPCSTR lpRootPathName)
+{
+	char *path = CreateAnsiFromWide(lpRootPathName);
+	printf("%s [%s]\n", lpRootPathName, path);
+	free(path);
+	return DRIVE_FIXED;
+}
+
+
 DECLARE_CRT_EXPORT("GetTempPathW", GetTempPathW);
 DECLARE_CRT_EXPORT("GetLogicalDrives", GetLogicalDrives);
 DECLARE_CRT_EXPORT("GetDriveTypeW", GetDriveTypeW);
+
+DECLARE_CRT_EXPORT("GetDriveTypeA", GetDriveTypeA);

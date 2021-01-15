@@ -75,7 +75,7 @@ static HANDLE WINAPI GetModuleHandleW(PVOID lpModuleName)
 
 static DWORD WINAPI GetModuleFileNameA(HANDLE hModule, PCHAR lpFilename, DWORD nSize)
 {
-    DebugLog("%p, %p, %u", hModule, lpFilename, nSize);
+	DebugLog("%p, %s, %u\n", hModule, lpFilename, nSize);
 
     strncpy(lpFilename, "fakename.exe", nSize);
 

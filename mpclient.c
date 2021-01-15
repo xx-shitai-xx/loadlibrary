@@ -1,5 +1,5 @@
 //
-// Copyright (C) 2017 Tavis Ormandy
+// Copyright (C) 2020 Tavis Ormandy
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,254 +16,435 @@
 # define _GNU_SOURCE
 #endif
 
+#include <iconv.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <ctype.h>
-#include <stdarg.h>
-#include <assert.h>
-#include <string.h>
-#include <time.h>
-#include <sys/resource.h>
-#include <sys/unistd.h>
-#include <asm/unistd.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <signal.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <mcheck.h>
+#include <stdlib.h>
 #include <err.h>
+#include <mcheck.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
+#include "log.h"
 #include "winnt_types.h"
 #include "pe_linker.h"
 #include "ntoskernel.h"
 #include "util.h"
 #include "hook.h"
-#include "log.h"
-#include "rsignal.h"
-#include "engineboot.h"
-#include "scanreply.h"
-#include "streambuffer.h"
-#include "openscan.h"
 
-// Any usage limits to prevent bugs disrupting system.
-const struct rlimit kUsageLimits[] = {
-    [RLIMIT_FSIZE]  = { .rlim_cur = 0x20000000, .rlim_max = 0x20000000 },
-    [RLIMIT_CPU]    = { .rlim_cur = 3600,       .rlim_max = RLIM_INFINITY },
-    [RLIMIT_CORE]   = { .rlim_cur = 0,          .rlim_max = 0 },
-    [RLIMIT_NOFILE] = { .rlim_cur = 32,         .rlim_max = 32 },
+#define xstr(s) str(s)
+#define str(s) #s
+
+// In order to get output from scripts, I hook window.parseInt(), and check if
+// the first character of the string is the magic (UTF-16LE) character.
+// this little snippet makes that available as console.log().
+#define CONSOLE_LOG_MAGIC 0x4141
+
+const char header[] =
+    "var console = {                                                        \n"
+    "   log: function() {                                                   \n"
+    "       parseInt(String.fromCharCode(" xstr(CONSOLE_LOG_MAGIC) ")       \n"
+    "           + Array.prototype.join.call(arguments, ' ')                 \n"
+    "           + String.fromCharCode(0));                                  \n"
+    "   }                                                                   \n"
+    "};";
+
+// This structure appears to be 0xF4 bytes, used to configure the interpreter
+// object. I just accept most of the defaults, a few fields must be set. The
+// size must be exact, because it's passed *by value* to the routine at
+// 0x636930C0 (i.e. not by reference), and it's a callee-clears function.
+typedef struct _JSINT_PARAMS {
+    BYTE field_0[160];
+    DWORD field_A0;
+    DWORD field_A4;
+    DWORD field_A8;
+    DWORD field_AC;
+    DWORD field_B0;
+    PVOID field_B4;
+    DWORD field_B8;
+    DWORD field_BC;
+    DWORD field_C0;
+    DWORD field_C4;
+    DWORD field_C8;
+    PVOID field_CC;
+    DWORD field_D0;
+    DWORD field_D4;
+    DWORD field_D8;
+    DWORD field_DC;
+    DWORD field_E0;
+    DWORD field_E4;
+    DWORD field_E8;
+    DWORD field_EC;
+    DWORD field_F0;
+} JSINT_PARAMS, *PJSINT_PARAMS;
+
+
+// These addresses are from algo.dll with hash D357DD90BDD1E597E417791851F591BD
+PVOID (* __thiscall jsint_constructor)(PVOID this, DWORD unused) = (PVOID) 0x636923B0;
+BOOL (* __thiscall jsint_init)(PVOID this, JSINT_PARAMS params) = (PVOID) 0x636930C0;
+DWORD (* __thiscall jsint_run)(PVOID this, PVOID inputbuf, DWORD inputlen, DWORD unknown, DWORD flag) = (PVOID) 0x63693F00;
+PVOID (* __cdecl window_parseInt)(void) = (PVOID) 0x637810D0;
+
+struct jsstr {
+    DWORD field_0;
+    DWORD field_4;
+    DWORD field_8;
+    DWORD field_C;
+    DWORD field_10;
+    DWORD field_14;
+    DWORD field_18;
+    DWORD field_1C;
+    DWORD field_20;
+    DWORD field_24;
+    DWORD field_28;
+    DWORD field_2C;
+    struct {
+        struct {
+            PWCHAR (__thiscall *GetStringValue)(PVOID this);
+        } *vtbl;
+    } data;
 };
 
-DWORD (* __rsignal)(PHANDLE KernelHandle, DWORD Code, PVOID Params, DWORD Size);
+struct jsval {
+    DWORD type;
+    union {
+        BYTE boolean;
+        struct jsstr *string;
+        double number;
+    } value;
+};
 
-static DWORD EngineScanCallback(PSCANSTRUCT Scan)
+struct arguments {
+    struct jsval *arglist;
+    DWORD numargs;
+};
+
+
+// I inject this routine into window.parseInt, if the first character of the
+// string is the magic character %u4141, I assume it was a log message and
+// convert it to UTF-8 and print it.
+//
+// When this routine returns, control returns to window.parseInt.
+void interpreter_hook_point(uintptr_t retaddr,
+                            struct jsval **retval,
+                            struct arguments *args,
+                            PVOID thisobj,
+                            PVOID jsint)
 {
-    if (Scan->Flags & SCAN_MEMBERNAME) {
-        LogMessage("Scanning archive member %s", Scan->VirusName);
+    static iconv_t cd;
+    size_t lenparam = 0;
+    size_t lenout = 0;
+    struct jsstr *param;
+    PWCHAR paramstr;
+    char *outptr;
+    char *output;
+
+    void __attribute__((constructor)) init()
+    {
+        cd = iconv_open("UTF-8", "UTF-16LE");
     }
-    if (Scan->Flags & SCAN_FILENAME) {
-        LogMessage("Scanning %s", Scan->FileName);
+
+    void __attribute__((destructor)) fini()
+    {
+        iconv_close(cd);
     }
-    if (Scan->Flags & SCAN_PACKERSTART) {
-        LogMessage("Packer %s identified.", Scan->VirusName);
-    }
-    if (Scan->Flags & SCAN_ENCRYPTED) {
-        LogMessage("File is encrypted.");
-    }
-    if (Scan->Flags & SCAN_CORRUPT) {
-        LogMessage("File may be corrupt.");
-    }
-    if (Scan->Flags & SCAN_FILETYPE) {
-        LogMessage("File %s is identified as %s", Scan->FileName, Scan->VirusName);
-    }
-    if (Scan->Flags & 0x08000022) {
-        LogMessage("Threat %s identified.", Scan->VirusName);
-    }
-    // This may indicate PUA.
-    if ((Scan->Flags & 0x40010000) == 0x40010000) {
-        LogMessage("Threat %s identified.", Scan->VirusName);
-    }
-    return 0;
+
+    if (args->numargs != 1)
+        return;
+
+    if (args->arglist[0].type != 1)
+        return;
+
+    param = args->arglist[0].value.string;
+
+    // First resolve the parameter address.
+    paramstr = param->data.vtbl->GetStringValue(&param->data);
+
+    // Verify this message is for us, by checking for magic character.
+    if (*paramstr++ != CONSOLE_LOG_MAGIC)
+        return;
+
+    // It is for us, count the number of widechars provided.
+    while (paramstr[lenparam++])
+        ;
+
+    // Allocate space for output string.
+    outptr = memset(alloca(lenparam), 0, lenparam);
+    output = outptr;
+    lenout = lenparam;
+
+    // Adjust input size for UTF-16 characters.
+    lenparam *= sizeof(*paramstr);
+
+    // Now convert to UTF-8.
+    iconv(cd, (void *)(&paramstr), &lenparam, &outptr, &lenout);
+
+    // Log result.
+    printf("%s\n", output);
+    return;
 }
 
-static DWORD ReadStream(PVOID this, ULONGLONG Offset, PVOID Buffer, DWORD Size, PDWORD SizeRead)
+
+void _getdrive_hook_point(uintptr_t retaddr, INT **retval, void*arg)
 {
-    fseek(this, Offset, SEEK_SET);
-    *SizeRead = fread(Buffer, 1, Size, this);
-    return TRUE;
+
+    // Log result.
+    printf("tjo\n");
+    //retval = 1;
+    return;
 }
 
-static DWORD GetStreamSize(PVOID this, PULONGLONG FileSize)
+PVOID resolve_callback_code(DWORD callback_code)
 {
-    fseek(this, 0, SEEK_END);
-    *FileSize = ftell(this);
-    return TRUE;
+    switch (callback_code) {
+        case 'CLMR': return malloc;
+        case 'ERFR': return free;
+    }
+
+    // It requests dozens of functions, but we don't need most of them.
+    return NULL;
 }
 
-static PWCHAR GetStreamName(PVOID this)
-{
-    return L"input";
+struct JString {
+	int *tmpstart;
+	const char *buffer;
+	int length;
+};
+
+PVOID (*engine_GlobalStart)(PVOID callback, DWORD unknown);
+
+
+PVOID (*graal_setHomeDirectory)(UCHAR *param);
+
+PVOID (*graal_setLogGraalMessage)(PVOID callback);
+
+PCHAR (*getGraalScriptFunctions)(PVOID callback);
+
+PVOID (*initGraalScriptEnvironment)();
+
+PCHAR (*listScriptFunctions)();
+
+PHANDLE (*graal_engineInitialize)(UCHAR *param);
+
+PVOID (*setGraalServerStartConnect)(const char *param);
+
+PVOID (*connectToGraalServer)(UCHAR *param1, UCHAR *param2, UCHAR *param3);
+
+PVOID (*setGraalPlayerWeaponScript)(const char *param1, const char *param2, int param3);
+
+PVOID (*setDefaultGuestAccount)(const char *param1);
+
+PVOID graalprint(UCHAR *text) {
+	LogMessage(text);
 }
 
-// These are available for pintool.
-BOOL __noinline InstrumentationCallback(PVOID ImageStart, SIZE_T ImageSize)
-{
-    // Prevent the call from being optimized away.
-    asm volatile ("");
-    return TRUE;
+INT (*__cdecl _getdrive)(void) = (PVOID)0x10225f86-4;
+
+/*
+std::string ExePath() {
+	char buffer[MAX_PATH];
+	GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+	string::size_type pos = string(buffer).find_last_of("\\/");
+	return string(buffer).substr(0, pos);
 }
+*/
 
 int main(int argc, char **argv, char **envp)
 {
-    PIMAGE_DOS_HEADER DosHeader;
-    PIMAGE_NT_HEADERS PeHeader;
-    HANDLE KernelHandle;
-    SCAN_REPLY ScanReply;
-    BOOTENGINE_PARAMS BootParams;
-    SCANSTREAM_PARAMS ScanParams;
-    STREAMBUFFER_DESCRIPTOR ScanDescriptor;
-    ENGINE_INFO EngineInfo;
-    ENGINE_CONFIG EngineConfig;
-    struct pe_image image = {
-        .entry  = NULL,
-        .name   = "engine/mpengine.dll",
+    BOOL result;
+    PVOID jsint;
+    JSINT_PARAMS jsparams = {
+        .field_A0 = ~0,
+        .field_B4 = "",
+        .field_CC = "",
     };
 
-    // Load the mpengine module.
+    struct pe_image image = {
+        .name   = "GraalEngine.dll",
+    };
+
+	graalprint ("Enable pedantic heap checking.");
+    //mcheck_pedantic(0);
+
+	graalprint ("Load the scan engine");
+    // Load the scan engine.
+
     if (pe_load_library(image.name, &image.image, &image.size) == false) {
-        LogMessage("You must add the dll and vdm files to the engine directory");
         return 1;
     }
 
-    // Handle relocations, imports, etc.
-    link_pe_images(&image, 1);
+    // .
+	graalprint ("Handle relocations, imports, etc");
 
-    // Fetch the headers to get base offsets.
-    DosHeader   = (PIMAGE_DOS_HEADER) image.image;
-    PeHeader    = (PIMAGE_NT_HEADERS)(image.image + DosHeader->e_lfanew);
+	link_pe_images(&image, 1);
 
-    // Load any additional exports.
-    if (!process_extra_exports(image.image, PeHeader->OptionalHeader.BaseOfCode, "engine/mpengine.map")) {
-#ifndef NDEBUG
-        LogMessage("The map file wasn't found, symbols wont be available");
-#endif
-    } else {
-        // Calculate the commands needed to get export and map symbols visible in gdb.
-        if (IsDebuggerPresent()) {
-            LogMessage("GDB: add-symbol-file %s %#x+%#x",
-                       image.name,
-                       image.image,
-                       PeHeader->OptionalHeader.BaseOfCode);
-            LogMessage("GDB: shell bash genmapsym.sh %#x+%#x symbols_%d.o < %s",
-                       image.image,
-                       PeHeader->OptionalHeader.BaseOfCode,
-                       getpid(),
-                       "engine/mpengine.map");
-            LogMessage("GDB: add-symbol-file symbols_%d.o 0", getpid());
-            __debugbreak();
-        }
-    }
-
-    if (get_export("__rsignal", &__rsignal) == -1) {
-        errx(EXIT_FAILURE, "Failed to resolve mpengine entrypoint");
-    }
-
-    EXCEPTION_DISPOSITION ExceptionHandler(struct _EXCEPTION_RECORD *ExceptionRecord,
-            struct _EXCEPTION_FRAME *EstablisherFrame,
-            struct _CONTEXT *ContextRecord,
-            struct _EXCEPTION_FRAME **DispatcherContext)
-    {
-        LogMessage("Toplevel Exception Handler Caught Exception");
-        abort();
-    }
-
-    VOID ResourceExhaustedHandler(int Signal)
-    {
-        errx(EXIT_FAILURE, "Resource Limits Exhausted, Signal %s", strsignal(Signal));
-    }
-
-    setup_nt_threadinfo(ExceptionHandler);
-
-    // Call DllMain()
-    image.entry((PVOID) 'MPEN', DLL_PROCESS_ATTACH, NULL);
-
-    // Install usage limits to prevent system crash.
-    setrlimit(RLIMIT_CORE, &kUsageLimits[RLIMIT_CORE]);
-    setrlimit(RLIMIT_CPU, &kUsageLimits[RLIMIT_CPU]);
-    setrlimit(RLIMIT_FSIZE, &kUsageLimits[RLIMIT_FSIZE]);
-    setrlimit(RLIMIT_NOFILE, &kUsageLimits[RLIMIT_NOFILE]);
-
-    signal(SIGXCPU, ResourceExhaustedHandler);
-    signal(SIGXFSZ, ResourceExhaustedHandler);
-
-# ifndef NDEBUG
-    // Enable Maximum heap checking.
-    mcheck_pedantic(NULL);
-# endif
-
-    ZeroMemory(&BootParams, sizeof BootParams);
-    ZeroMemory(&EngineInfo, sizeof EngineInfo);
-    ZeroMemory(&EngineConfig, sizeof EngineConfig);
-
-    BootParams.ClientVersion = BOOTENGINE_PARAMS_VERSION;
-    BootParams.Attributes    = BOOT_ATTR_NORMAL;
-    BootParams.SignatureLocation = L"engine";
-    BootParams.ProductName = L"Legitimate Antivirus";
-    EngineConfig.QuarantineLocation = L"quarantine";
-    EngineConfig.Inclusions = L"*.*";
-    EngineConfig.EngineFlags = 1 << 1;
-    BootParams.EngineInfo = &EngineInfo;
-    BootParams.EngineConfig = &EngineConfig;
-    KernelHandle = NULL;
-
-    if (__rsignal(&KernelHandle, RSIG_BOOTENGINE, &BootParams, sizeof BootParams) != 0) {
-        LogMessage("__rsignal(RSIG_BOOTENGINE) returned failure, missing definitions?");
-        LogMessage("Make sure the VDM files and mpengine.dll are in the engine directory");
+	graalprint("Get pointer for graal_setLogGraalMessage");
+    if (get_export("graal_setLogGraalMessage", &graal_setLogGraalMessage)) {
+		graalprint("failed to resolve required module exports");
         return 1;
     }
 
-    ZeroMemory(&ScanParams, sizeof ScanParams);
-    ZeroMemory(&ScanDescriptor, sizeof ScanDescriptor);
-    ZeroMemory(&ScanReply, sizeof ScanReply);
-
-    ScanParams.Descriptor        = &ScanDescriptor;
-    ScanParams.ScanReply         = &ScanReply;
-    ScanReply.EngineScanCallback = EngineScanCallback;
-    ScanReply.field_C            = 0x7fffffff;
-    ScanDescriptor.Read          = ReadStream;
-    ScanDescriptor.GetSize       = GetStreamSize;
-    ScanDescriptor.GetName       = GetStreamName;
-
-    if (argc < 2) {
-        LogMessage("usage: %s [filenames...]", *argv);
+	graalprint("Get pointer for graal_setHomeDirectory");
+	if (get_export("graal_setHomeDirectory", &graal_setHomeDirectory)) {
+        LogMessage("failed to resolve required module exports");
         return 1;
     }
 
-    // Enable Instrumentation.
-    InstrumentationCallback(image.image, image.size);
+	graalprint("Get pointer for initScriptMachineEnvironment");
+	/*
+	 * if (get_export("initScriptMachineEnvironment", &initScriptMachineEnvironment)) {
+		LogMessage("failed to resolve required module exports");
+		return 1;
+	}
+	*/
+	initGraalScriptEnvironment = (void*)0x1019dcc0;
+	listScriptFunctions = (void*)0x1019e810;
 
-    for (char *filename = *++argv; *argv; ++argv) {
-        ScanDescriptor.UserPtr = fopen(*argv, "r");
+	graalprint("Get pointer for graal_engineInitialize");
 
-        if (ScanDescriptor.UserPtr == NULL) {
-            LogMessage("failed to open file %s", *argv);
-            return 1;
-        }
-
-        LogMessage("Scanning %s...", *argv);
-
-        if (__rsignal(&KernelHandle, RSIG_SCAN_STREAMBUFFER, &ScanParams, sizeof ScanParams) != 0) {
-            LogMessage("__rsignal(RSIG_SCAN_STREAMBUFFER) returned failure, file unreadable?");
-            return 1;
-        }
-
-        fclose(ScanDescriptor.UserPtr);
+	if (get_export("graal_engineInitialize", &graal_engineInitialize)) {
+        LogMessage("failed to resolve required module exports");
+        return 1;
     }
 
+	graalprint("Get pointer for connectToGraalServer");
+	if (get_export("connectToGraalServer", &connectToGraalServer)) {
+        LogMessage("failed to resolve required module exports");
+        return 1;
+    }
+
+
+	graalprint("Set pointer for callback of graal logmessage");
+	graal_setLogGraalMessage(graalprint);
+//	initGraalScriptEnvironment();
+//	void* asd = listScriptFunctions();
+
+	//PCHAR test = getGraalScriptFunctions(0x0);
+    //graal_setHomeDirectory("c:");
+//printf("sad: %p\n", asd);
+//asd();
+	graalprint ("Initialize graalengine: ");
+    graal_engineInitialize("");
+	graalprint ("TEST8");
+
+    connectToGraalServer("","","");
+	graalprint ("TEST8");
+
+
+
+
+    // Allocate interpreter object, you can see this allocation in the function
+    // at 634D7AE0.
+    jsint = calloc(1, 0x54A0);
+
+    // Hook Window::parseInt so we can get some output.
+
+/*
+    // Check if user wants a file or a shell..
+    if (argc > 1) {
+        size_t filelen;
+        char *filebuf;
+        FILE *script;
+
+        // The first parameter is the filename to read.
+        script = fopen(argv[1], "r");
+
+        if (script == NULL) {
+            err(EXIT_FAILURE, "The specified script could not be found");
+        }
+
+        // Seek to the end of the input.
+        fseek(script, 0, SEEK_END);
+
+        // Allocate space to store the script.
+        filelen = ftell(script);
+        filebuf = calloc(filelen + sizeof(header), 1);
+
+        rewind(script);
+
+        if (filebuf == NULL) {
+            err(EXIT_FAILURE, "Memory allocation failed");
+        }
+
+        // Prepend the header and read data.
+        if (fread(mempcpy(filebuf, header, strlen(header)),
+                  1,
+                  filelen,
+                  script) != filelen) {
+            err(EXIT_FAILURE, "Failed to read the script specified");
+        }
+
+        LogMessage("File `%s` loaded, about to initialize interpreter...", argv[1]);
+
+        // This creates the class object we need to start the interpreter.
+        jsint = jsint_constructor(jsint, 0);
+        jsint_init(jsint, jsparams);
+        jsint_run(jsint, filebuf, filelen + sizeof(header), 0, true);
+        return 0;
+    }
+
+    LogMessage("Ready, type javascript (history available, use arrow keys)");
+    LogMessage("Use `console.log()` to show output, use ^D to exit");
+
+    while (true) {
+        char *inputline = readline("> ");
+        char *scanbuf;
+        int result;
+
+        if (inputline) {
+            char *escapebuf = calloc(strlen(inputline) + 1, 3);
+            char *p = escapebuf;
+
+            if (!escapebuf)
+                break;
+
+            // This is probably not correct.
+            for (size_t i = 0; inputline[i]; i++) {
+               if (inputline[i] == '%') {
+                   *p++ = '%'; *p++ = '2'; *p++ = '5';
+               } else if (inputline[i] == '\'') {
+                   *p++ = '%'; *p++ = '2'; *p++ = '7';
+               } else if (inputline[i] == '\\') {
+                   *p++ = '%'; *p++ = '5'; *p++ = 'c';
+               } else {
+                   *p++ = inputline[i];
+               }
+            }
+
+            if (asprintf(&scanbuf,
+                         "%s                                    \n"
+                         "try {                                 \n"
+                         "  console.log(eval(unescape('%s')));  \n"
+                         "} catch (e) {                         \n"
+                         "  console.log('Exception: ' + e);     \n"
+                         "}                                     \n",
+                         header,
+                         escapebuf) == -1) {
+                err(EXIT_FAILURE, "memory allocation failure");
+            }
+
+            free(escapebuf);
+        } else {
+            break;
+        }
+
+        jsint = jsint_constructor(jsint, 0);
+
+        jsint_init(jsint, jsparams);
+
+        result = jsint_run(jsint, scanbuf, strlen(scanbuf), 0, true);
+
+        add_history(inputline);
+        free(scanbuf);
+        free(inputline);
+
+        if (result < 0) {
+            DebugLog("-> %#x (interpreter failure)", result);
+            break;
+        }
+    }
+*/
     return 0;
 }
