@@ -11,3 +11,5 @@ eicar.com
 .idea/
 bin/GraalEngine-loader
 bin/GraalEngine.dll
+build/
+cmake-*/
