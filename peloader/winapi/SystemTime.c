@@ -112,6 +112,13 @@ STATIC BOOL WINAPI FileTimeToSystemTime(PFILETIME lpFileTime, PSYSTEMTIME lpSyst
     return FALSE;
 }
 
+STATIC NTSTATUS WINAPI NtQuerySystemTime(LARGE_INTEGER *SystemTime)
+{
+    DebugLog("%p", SystemTime);
+    *SystemTime = getSystemNanosecond();
+    return 0;
+}
+
 DECLARE_CRT_EXPORT("GetSystemTime", GetSystemTime);
 DECLARE_CRT_EXPORT("SystemTimeToFileTime", SystemTimeToFileTime);
 DECLARE_CRT_EXPORT("GetSystemTimePreciseAsFileTime", GetSystemTimePreciseAsFileTime);
@@ -123,3 +130,4 @@ DECLARE_CRT_EXPORT("GetTickCount64", GetTickCount64);
 DECLARE_CRT_EXPORT("GetProcessTimes", GetProcessTimes);
 DECLARE_CRT_EXPORT("DosDateTimeToFileTime", DosDateTimeToFileTime);
 DECLARE_CRT_EXPORT("FileTimeToSystemTime", FileTimeToSystemTime);
+DECLARE_CRT_EXPORT("NtQuerySystemTime", NtQuerySystemTime);

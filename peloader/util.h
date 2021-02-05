@@ -2,7 +2,11 @@
 #define __UTIL_H
 #pragma once
 
+#include <time.h>
+
 bool IsGdbPresent();
+uint64_t getSystemNanosecond(void);
+
 
 #ifdef __linux__
 #define __thiscall      __attribute__((thiscall))
