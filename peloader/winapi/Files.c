@@ -18,27 +18,13 @@
 #include "util.h"
 #include "winstrings.h"
 #include "Files.h"
+
 #include "file_mapping.h"
 
-union size {
-    int64_t size;
-    struct {
-        int32_t low;
-        int32_t high;
-    };
-} Size;
 
-union offset {
-    int64_t offset;
-    struct {
-        int32_t low;
-        int32_t high;
-    };
-} Offset;
+MappedFileObjectList *FileMappingList = NULL;
 
-MappedFileObjectList FileMappingList;
-
-NTSTATUS WINAPI NtCreateFile(HANDLE *FileHandle,
+STATIC NTSTATUS WINAPI NtCreateFile(HANDLE *FileHandle,
                              ACCESS_MASK DesiredAccess,
                              POBJECT_ATTRIBUTES ObjectAttributes,
                              PIO_STATUS_BLOCK IoStatusBlock,
@@ -139,7 +125,7 @@ STATIC DWORD WINAPI GetFileAttributesExW(PWCHAR lpFileName, DWORD fInfoLevelId, 
 }
 
 
-HANDLE WINAPI CreateFileA(PCHAR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, PVOID lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
+STATIC HANDLE WINAPI CreateFileA(PCHAR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, PVOID lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
 {
     FILE *FileHandle;
 
@@ -180,7 +166,7 @@ HANDLE WINAPI CreateFileA(PCHAR lpFileName, DWORD dwDesiredAccess, DWORD dwShare
     return FileHandle ? FileHandle : INVALID_HANDLE_VALUE;
 }
 
-HANDLE WINAPI CreateFileW(PWCHAR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, PVOID lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
+STATIC HANDLE WINAPI CreateFileW(PWCHAR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, PVOID lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)
 {
     FILE *FileHandle;
     char *filename = CreateAnsiFromWide(lpFileName);
@@ -267,16 +253,15 @@ STATIC BOOL WINAPI SetFilePointerEx(HANDLE hFile, uint64_t liDistanceToMove,  ui
 STATIC BOOL WINAPI CloseHandle(HANDLE hObject)
 {
     DebugLog("%p", hObject);
-    /*if (DeleteMappedFile(hObject, &FileMappingList)) {
+    if (DeleteMappedFile(hObject, FileMappingList)) {
         return TRUE;
-    }*/
+    }
     if (hObject != (HANDLE) 'EVNT'
      && hObject != INVALID_HANDLE_VALUE
      && hObject != (HANDLE) 'SEMA')
         fclose(hObject);
     return TRUE;
 }
-
 
 STATIC BOOL WINAPI ReadFile(HANDLE hFile, PVOID lpBuffer, DWORD nNumberOfBytesToRead, PDWORD lpNumberOfBytesRead, PVOID lpOverlapped)
 {
@@ -327,25 +312,26 @@ STATIC BOOL WINAPI GetFileSizeEx(HANDLE hFile, uint64_t *lpFileSize)
 
 STATIC DWORD WINAPI GetFileSize(HANDLE hFile, DWORD *lpFileSizeHigh)
 {
+    union Size FileSize;
     long curpos = ftell(hFile);
 
     fseek(hFile, 0, SEEK_END);
 
-    size_t FileSize = ftell(hFile);
+    size_t size = ftell(hFile);
 
-    Size.size = FileSize;
+    FileSize.size = size;
 
     fseek(hFile, curpos, SEEK_SET);
 
     DebugLog("%p => %#x", hFile, FileSize);
 
     if (lpFileSizeHigh != NULL)
-        *lpFileSizeHigh = Size.high;
+        *lpFileSizeHigh = FileSize.high;
 
-    return FileSize;
+    return size;
 }
 
-DWORD WINAPI GetFileAttributesA(LPCSTR lpFileName)
+STATIC DWORD WINAPI GetFileAttributesA(LPCSTR lpFileName)
 {
     DWORD Result = FILE_ATTRIBUTE_NORMAL;
     DebugLog("%p [%s]", lpFileName, lpFileName);
@@ -368,19 +354,20 @@ STATIC HANDLE WINAPI CreateFileMappingA(HANDLE hFile,
                                           DWORD dwMaximumSizeLow,
                                           LPCSTR lpName)
 {
+    union Size FileSize;
     DebugLog("%p, %#x, %#x, %#x, [%s]", hFile, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
-    Size.high = dwMaximumSizeHigh;
-    Size.low = dwMaximumSizeLow;
+    FileSize.high = dwMaximumSizeHigh;
+    FileSize.low = dwMaximumSizeLow;
 
     MappedFileEntry *pMappedFileObjectEntry = (MappedFileEntry*) calloc(1, sizeof(MappedFileEntry));
 
     int fd = fileno(hFile);
     pMappedFileObjectEntry->fd = fd;
 
-    PVOID addr = mmap(NULL, Size.size, PROT_READ, MAP_PRIVATE, fd, 0);
+    PVOID addr = mmap(NULL, FileSize.size, PROT_READ, MAP_PRIVATE, fd, 0);
     pMappedFileObjectEntry->start = (intptr_t) addr;
-    pMappedFileObjectEntry->end = (intptr_t) addr + Size.size;
-    pMappedFileObjectEntry->size = Size.size;
+    pMappedFileObjectEntry->end = (intptr_t) addr + FileSize.size;
+    pMappedFileObjectEntry->size = FileSize.size;
 
     if (addr == MAP_FAILED) {
         DebugLog("[ERROR] failed to create file object mapping: %s", strerror(errno));
@@ -388,13 +375,17 @@ STATIC HANDLE WINAPI CreateFileMappingA(HANDLE hFile,
         return INVALID_HANDLE_VALUE;
     }
 
-    AddMappedFile(pMappedFileObjectEntry, &FileMappingList);
+    if (FileMappingList == NULL) {
+        FileMappingList = (MappedFileObjectList *) malloc(sizeof(MappedFileObjectList));
+        FileMappingList->head = NULL;
+    }
+
+    AddMappedFile(pMappedFileObjectEntry, FileMappingList);
 
     DebugLog("%p => %p", hFile, pMappedFileObjectEntry);
 
     return pMappedFileObjectEntry;
 }
-
 
 STATIC PVOID WINAPI MapViewOfFile(HANDLE hFileMappingObject,
                                   DWORD dwDesiredAccess,
@@ -403,15 +394,15 @@ STATIC PVOID WINAPI MapViewOfFile(HANDLE hFileMappingObject,
                                   SIZE_T dwNumberOfBytesToMap)
 {
     DebugLog("%p, %#x, %#x, %#x, %#x", hFileMappingObject, dwDesiredAccess, dwFileOffsetHigh, dwFileOffsetLow, dwNumberOfBytesToMap);
-
-    Offset.high = dwFileOffsetHigh;
-    Offset.low = dwFileOffsetLow;
+    union Offset FileOffset;
+    FileOffset.high = dwFileOffsetHigh;
+    FileOffset.low = dwFileOffsetLow;
 
     MappedFileEntry *MappedFile = (MappedFileEntry*) hFileMappingObject;
 
     PVOID FileView = malloc(dwNumberOfBytesToMap);
     if (dwNumberOfBytesToMap == 0) {
-        dwNumberOfBytesToMap = MappedFile->size - Offset.offset;
+        dwNumberOfBytesToMap = MappedFile->size - FileOffset.offset;
         FileView = realloc(FileView, dwNumberOfBytesToMap);
 
     }
@@ -420,7 +411,7 @@ STATIC PVOID WINAPI MapViewOfFile(HANDLE hFileMappingObject,
         return NULL;
     }
 
-    memcpy(FileView, (void*)MappedFile->start + Offset.offset, dwNumberOfBytesToMap);
+    memcpy(FileView, (void*)MappedFile->start + FileOffset.offset, dwNumberOfBytesToMap);
 
     return FileView;
 }

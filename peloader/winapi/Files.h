@@ -1,22 +1,7 @@
 #ifndef LOADLIBRARY_FILES_H
 #define LOADLIBRARY_FILES_H
 
-
 extern void WINAPI SetLastError(DWORD dwErrCode);
-HANDLE WINAPI CreateFileA(PCHAR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, PVOID lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
-HANDLE WINAPI CreateFileW(PWCHAR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, PVOID lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
-NTSTATUS WINAPI NtCreateFile(HANDLE *FileHandle,
-                             ACCESS_MASK DesiredAccess,
-                             POBJECT_ATTRIBUTES ObjectAttributes,
-                             PIO_STATUS_BLOCK IoStatusBlock,
-                             LARGE_INTEGER *AllocationSize,
-                             ULONG FileAttributes,
-                             ULONG ShareAccess,
-                             ULONG CreateDisposition,
-                             ULONG CreateOptions,
-                             PVOID EaBuffer,
-                             ULONG EaLength);
-DWORD WINAPI GetFileAttributesA(LPCSTR lpFileName);
 
 enum {
     CREATE_NEW          = 1,
@@ -24,6 +9,22 @@ enum {
     OPEN_EXISTING       = 3,
     OPEN_ALWAYS         = 4,
     TRUNCATE_EXISTING   = 5
+};
+
+union Size {
+    int64_t size;
+    struct {
+        int32_t low;
+        int32_t high;
+    };
+};
+
+union Offset {
+    int64_t offset;
+    struct {
+        int32_t low;
+        int32_t high;
+    };
 };
 
 #define FILE_TYPE_CHAR 0x0002

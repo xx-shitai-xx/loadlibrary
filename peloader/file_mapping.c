@@ -1,13 +1,13 @@
 #include <stdlib.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
 #include "file_mapping.h"
 
 
 void AddMappedFile(MappedFileEntry *mapped_file, MappedFileObjectList *list)
 {
-    if (list == NULL) {
-        list = (MappedFileObjectList *) malloc(sizeof(MappedFileObjectList));
-        list->head = NULL;
-    }
     MappedFileEntry *current;
 
     if (list->head == NULL) {
@@ -27,10 +27,11 @@ void AddMappedFile(MappedFileEntry *mapped_file, MappedFileObjectList *list)
 bool DeleteMappedFile(MappedFileEntry *mapped_file, MappedFileObjectList *list)
 {
     MappedFileEntry *to_delete = NULL;
-    MappedFileEntry *current = list->head;
 
     if (list == NULL)
         return false;
+
+    MappedFileEntry *current = list->head;
 
     // mapped_file is the first in the list
     if (current == mapped_file) {
