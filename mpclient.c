@@ -51,6 +51,19 @@
 #include "streambuffer.h"
 #include "openscan.h"
 
+EXCEPTION_DISPOSITION ExceptionHandler(struct _EXCEPTION_RECORD *ExceptionRecord,
+                                       struct _EXCEPTION_FRAME *EstablisherFrame,
+                                       struct _CONTEXT *ContextRecord,
+                                       struct _EXCEPTION_FRAME **DispatcherContext)
+{
+    LogMessage("Toplevel Exception Handler Caught Exception");
+    abort();
+}
+
+VOID ResourceExhaustedHandler(int Signal)
+{
+    errx(EXIT_FAILURE, "Resource Limits Exhausted, Signal %s", strsignal(Signal));
+}
 struct JString{
 	unsigned char* buffer;
 	int length;
@@ -204,20 +217,6 @@ int main(int argc, char **argv, char **envp)
 	}
 
 
-    EXCEPTION_DISPOSITION ExceptionHandler(struct _EXCEPTION_RECORD *ExceptionRecord,
-            struct _EXCEPTION_FRAME *EstablisherFrame,
-            struct _CONTEXT *ContextRecord,
-            struct _EXCEPTION_FRAME **DispatcherContext)
-    {
-        LogMessage("Toplevel Exception Handler Caught Exception");
-        abort();
-    }
-
-    VOID ResourceExhaustedHandler(int Signal)
-    {
-        errx(EXIT_FAILURE, "Resource Limits Exhausted, Signal %s", strsignal(Signal));
-    }
-
 	setup_nt_threadinfo(ExceptionHandler);
 
 	graalprint("Call DllMain()");
@@ -233,7 +232,7 @@ int main(int argc, char **argv, char **envp)
 
 
 
-	// Enable Instrumentation.
+	graalprint("Enable Instrumentation.");
 	InstrumentationCallback(image.image, image.size);
 
 	graalprint("Get pointer for graal_setLogGraalMessage");
