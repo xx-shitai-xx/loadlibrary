@@ -13,7 +13,7 @@ TARGETS=libpeloader.a
 
 all: $(TARGETS)
 
-libpeloader.a: $(WINAPI) $(WINAPI_HOOKS) winstrings.o pe_linker.o crt.o log.o util.o extra.o
+libpeloader.a: $(WINAPI) $(WINAPI_HOOKS) winstrings.o pe_linker.o crt.o log.o util.o extra.o file_mapping.o
 	$(AR) $(ARFLAGS) $@ $^
 
 clean:

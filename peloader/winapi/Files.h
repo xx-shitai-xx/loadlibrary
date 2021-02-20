@@ -1,16 +1,6 @@
 #ifndef LOADLIBRARY_FILES_H
 #define LOADLIBRARY_FILES_H
 
-HANDLE WINAPI FindFirstFileW(PWCHAR lpFileName, PVOID lpFindFileData);
-
-typedef struct WIN32_FILE_ATTRIBUTE_DATA {
-    DWORD    dwFileAttributes;
-    FILETIME ftCreationTime;
-    FILETIME ftLastAccessTime;
-    FILETIME ftLastWriteTime;
-    DWORD    nFileSizeHigh;
-    DWORD    nFileSizeLow;
-} WIN32_FILE_ATTRIBUTE_DATA, *LPWIN32_FILE_ATTRIBUTE_DATA;
 extern void WINAPI SetLastError(DWORD dwErrCode);
 
 enum {
@@ -20,6 +10,28 @@ enum {
     OPEN_ALWAYS         = 4,
     TRUNCATE_EXISTING   = 5
 };
+
+union Size {
+    int64_t size;
+    struct {
+        int32_t low;
+        int32_t high;
+    };
+};
+
+union Offset {
+    int64_t offset;
+    struct {
+        int32_t low;
+        int32_t high;
+    };
+};
+
+#define FILE_TYPE_CHAR 0x0002
+#define FILE_TYPE_DISK 0x0001
+#define FILE_TYPE_PIPE 0x0003
+#define FILE_TYPE_REMOTE 0x8000
+#define FILE_TYPE_UNKNOWN 0x0000
 
 #define ERROR_FILE_NOT_FOUND 2
 

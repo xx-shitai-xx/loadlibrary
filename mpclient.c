@@ -341,7 +341,6 @@ int main(int argc, char **argv, char **envp)
 	if (insert_function_redirect(THashList_unregisterIterator, interpreter_hook_point,HOOK_REPLACE_FUNCTION) == false) {
 		graalprint("Failed to hook THashList->Clear(), wont be able to display output");
 	}
-*/
 	if ( insert_function_redirect(FileExists, FileExists_hook, HOOK_REPLACE_FUNCTION) == false) {
 		graalprint("Failed to hook FileExists(), wont be able to display output");
 	}
@@ -349,6 +348,8 @@ int main(int argc, char **argv, char **envp)
 	if ( insert_function_redirect(FileSize, FileSize_hook, HOOK_REPLACE_FUNCTION) == false) {
 		graalprint("Failed to hook FileSize(), wont be able to display output");
 	}
+*/
+
 	graalprint("Get pointer for graal_engineInitialize");
 
 	if (get_export("graal_engineInitialize", &graal_engineInitialize)) {
