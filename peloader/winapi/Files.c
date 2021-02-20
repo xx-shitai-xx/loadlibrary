@@ -207,6 +207,14 @@ static BOOL WINAPI DeleteFileW(PWCHAR lpFileName)
     return TRUE;
 }
 
+static BOOL WINAPI DeleteFileA(LPCSTR lpFileName)
+{
+
+	DebugLog("DeleteFileA: %s", lpFileName);
+
+	return TRUE;
+}
+
 static BOOL WINAPI GetFileSizeEx(HANDLE hFile, uint64_t *lpFileSize)
 {
     long curpos = ftell(hFile);
@@ -240,13 +248,15 @@ STATIC HANDLE WINAPI FindFirstFileA(LPCSTR lpFileName, LPWIN32_FIND_DATAA lpFind
 
     //printf("%s [%s], %p\n", lpFileName, name, lpFindFileData);
 
-	printf("%s\n", lpFileName);
+	//printf("FindFirstFile: %s\n", lpFileName);
+	DebugLog("%s, %p", lpFileName, lpFindFileData);
 
-    //free(name);
-    memset((void*)lpFindFileData, 1, sizeof(LPWIN32_FIND_DATAA));
-    SetLastError(ERROR_FILE_NOT_FOUND);
 
-    return 0;//(HANDLE)'FILE';
+	//free(name);
+    //memset((void*)lpFindFileData, 1, sizeof(LPWIN32_FIND_DATAA));
+    //SetLastError(ERROR_FILE_NOT_FOUND);
+
+    return (HANDLE) "FIND";//0;//(HANDLE)'FILE';
 };
 
 static DWORD WINAPI NtOpenSymbolicLinkObject(PHANDLE LinkHandle, DWORD DesiredAccess, PVOID ObjectAttributes)
@@ -360,6 +370,7 @@ DECLARE_CRT_EXPORT("CloseHandle", CloseHandle);
 DECLARE_CRT_EXPORT("ReadFile", ReadFile);
 DECLARE_CRT_EXPORT("WriteFile", WriteFile);
 DECLARE_CRT_EXPORT("DeleteFileW", DeleteFileW);
+DECLARE_CRT_EXPORT("DeleteFileA", DeleteFileA);
 DECLARE_CRT_EXPORT("GetFileSizeEx", GetFileSizeEx);
 DECLARE_CRT_EXPORT("FindFirstFileW", FindFirstFileW);
 DECLARE_CRT_EXPORT("FindFirstFileA", FindFirstFileA);

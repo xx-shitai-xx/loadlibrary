@@ -44,7 +44,7 @@ file(GLOB PELOADER_SOURCES *.c *.h winapi/*.c winapi/*.h)
 
 add_library(${PROJECT_NAME} ${PELOADER_SOURCES})
 
-target_include_directories(${PROJECT_NAME} PUBLIC "include/" "intercept/" "peloader/" "./")
+target_include_directories(${PROJECT_NAME} PUBLIC "include/" "intercept/" "intercept/subhook" "peloader/" "./")
 target_compile_definitions(${PROJECT_NAME} PRIVATE -D_GNU_SOURCE)
 target_compile_options(${PROJECT_NAME} PRIVATE -march=native -ggdb3 -m32 -std=gnu99 -fshort-wchar -Wno-multichar -mstackrealign)
 target_link_libraries(${PROJECT_NAME} PRIVATE m )

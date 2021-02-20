@@ -64,9 +64,11 @@ VOID ResourceExhaustedHandler(int Signal)
 {
     errx(EXIT_FAILURE, "Resource Limits Exhausted, Signal %s", strsignal(Signal));
 }
-struct JString{
-	unsigned char* buffer;
+
+struct JString {
+	const char* buffer;
 	int length;
+	//unsigned char* asd;
 };
 
 struct TJStringList {
@@ -131,9 +133,10 @@ PVOID (*connectToGraalServer)(UCHAR *param1, UCHAR *param2, UCHAR *param3);
 PVOID (*setGraalPlayerWeaponScript)(const char *param1, const char *param2, int param3);
 
 PVOID (*setDefaultGuestAccount)(const char *param1);
+int (*entry)(int param_1,int param_2,int param_3);
 
 PVOID graalprint(UCHAR *text) {
-	LogMessage(text);
+	printf("%s\n",text);
 }
 
 static DWORD ReadStream(PVOID this, ULONGLONG Offset, PVOID Buffer, DWORD Size, PDWORD SizeRead)
@@ -161,6 +164,82 @@ BOOL __noinline InstrumentationCallback(PVOID ImageStart, SIZE_T ImageSize)
     // Prevent the call from being optimized away.
     asm volatile ("");
     return TRUE;
+}
+
+struct jsval {
+	DWORD type;
+	union {
+		BYTE boolean;
+		struct jsstr *string;
+		double number;
+	} value;
+};
+
+struct arguments {
+	struct jsval *arglist;
+	DWORD numargs;
+};
+
+PVOID	(* __cdecl THashList_Clear)(void)				= (PVOID) 0x10054d20;
+PVOID	(* __cdecl JString_constchar)(void)				= (PVOID) 0x10056f60;
+PVOID	(* __cdecl THashList_unregisterIterator)(void)	= (PVOID) 0x10054e10;
+PVOID	(* __cdecl JString_addbuffer)(void)				= (PVOID) 0x100571c0;
+BOOL	(* __cdecl FileExists)(void)					= (PVOID) 0x10224ecb;
+int		(* __cdecl FileSize)(const struct JString*)						= (PVOID) 0x10058df0;
+
+int FileSize_hook(const struct JString* param) {
+
+	return 0;
+}
+BOOL FileExists_hook(unsigned char* filename/*, const char *text, int lent, struct JString* this*/) {
+	//if ( !text || lent <= 0 ) {
+	//	return;
+	//}
+
+	//if (!this) {
+	//	this = malloc(sizeof (struct JString));
+	//}
+	//if ( this->buffer != NULL)
+	//	this->buffer = (unsigned char *)realloc(this->buffer, this->length + lent + 1);
+	//else
+	//	this->buffer = (unsigned char *)malloc(this->length + lent + 1);
+
+	//memcpy(this->buffer + this->length, text, lent);
+	//this->buffer[this->length + lent] = 0;
+	printf("file: %s\n", (unsigned char*)filename);
+	//printf("(%p) %s %d\n", FileExists, filename->buffer, filename->length);
+	//this->length += lent;
+	return 0;
+}
+
+void JString_JString_hook(/*uintptr_t retaddr,*/ unsigned char *that, struct JString* this)
+{
+
+	this = malloc(sizeof(struct JString));
+	uint32_t* stringc = (uint32_t *) 0x102a1198;
+	printf("(%p) %s %d\n", JString_constchar, that, *stringc);
+	this->buffer = that;
+	this->length = strlen(that);
+	//this->asd = 0;
+	*stringc = *stringc + 1;
+	printf("(%p) %s %d\n", JString_constchar, that, *stringc);
+	//that = this;
+	return;
+}
+
+void interpreter_hook_point(uintptr_t retaddr,
+							bool retval,
+							PVOID thisobj)
+{
+	size_t lenparam = 0;
+	size_t lenout = 0;
+	PWCHAR paramstr;
+	char *outptr;
+	char *output;
+
+	// Log result.
+	printf("%s\n", "test");
+	return;
 }
 
 int main(int argc, char **argv, char **envp)
@@ -230,8 +309,6 @@ int main(int argc, char **argv, char **envp)
 	mcheck_pedantic(NULL);
 # endif
 
-
-
 	graalprint("Enable Instrumentation.");
 	InstrumentationCallback(image.image, image.size);
 
@@ -256,13 +333,36 @@ int main(int argc, char **argv, char **envp)
 	*/
 	initGraalScriptEnvironment = (void*)0x1019dcc0;
 	listScriptFunctions = (void*)0x1019e810;
+/*
+	if (insert_function_redirect(THashList_Clear, interpreter_hook_point,HOOK_REPLACE_FUNCTION) == false) {
+		graalprint("Failed to hook THashList->Clear(), wont be able to display output");
+	}
 
+	if (insert_function_redirect(THashList_unregisterIterator, interpreter_hook_point,HOOK_REPLACE_FUNCTION) == false) {
+		graalprint("Failed to hook THashList->Clear(), wont be able to display output");
+	}
+*/
+	if ( insert_function_redirect(FileExists, FileExists_hook, HOOK_REPLACE_FUNCTION) == false) {
+		graalprint("Failed to hook FileExists(), wont be able to display output");
+	}
+
+	if ( insert_function_redirect(FileSize, FileSize_hook, HOOK_REPLACE_FUNCTION) == false) {
+		graalprint("Failed to hook FileSize(), wont be able to display output");
+	}
 	graalprint("Get pointer for graal_engineInitialize");
 
 	if (get_export("graal_engineInitialize", &graal_engineInitialize)) {
 		graalprint("failed to resolve required module exports");
 		return 1;
 	}
+
+	/*
+	if (get_export("entry", &entry)) {
+		graalprint("failed to resolve required entry exports");
+		return 1;
+	}*/
+
+	entry = (PVOID) 0x10216651;
 
 	graalprint("Get pointer for connectToGraalServer");
 	if (get_export("connectToGraalServer", &connectToGraalServer)) {
@@ -299,7 +399,8 @@ int main(int argc, char **argv, char **envp)
 	//printf("sad: %p\n", asd);
 	//asd();
 	graalprint ("Initialize graalengine: ");
-	graal_engineInitialize("");
+	entry(1,2,3);
+	graal_engineInitialize("YO!");
 	graalprint ("TEST8");
 	struct JString* test = malloc (sizeof (struct JString));//getGraalPassWord();
 	JString_new = (void*)0x10056e80;
