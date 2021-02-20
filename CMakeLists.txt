@@ -44,7 +44,7 @@ set(CMAKE_CXX_STANDARD 14)
 
 add_subdirectory(peloader)
 
-file(GLOB GSERVERNW_SOURCES src/mpclient.c)
+file(GLOB GSERVERNW_SOURCES mpclient.c)
 
 add_executable(${PROJECT_NAME} ${GSERVERNW_SOURCES})
 
