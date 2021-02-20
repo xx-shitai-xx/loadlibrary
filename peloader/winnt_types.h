@@ -15,7 +15,9 @@
 
 #ifndef _WINNT_TYPES_H_
 #define _WINNT_TYPES_H_
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #define DLL_PROCESS_ATTACH              1
 #define DLL_PROCESS_DETACH              0
 #define DLL_THREAD_ATTACH               2
@@ -1143,6 +1145,7 @@ IoSetCompletionRoutine(struct irp *irp, void *routine, void *context,
                 irp_sl->control |= SL_INVOKE_ON_CANCEL;
 }
 
+
 #define IoMarkIrpPending(irp)                                           \
         (IoGetCurrentIrpStackLocation((irp))->control |= SL_PENDING_RETURNED)
 #define IoUnmarkIrpPending(irp)                                         \
@@ -1858,5 +1861,9 @@ typedef enum _HEAP_INFORMATION_CLASS {
     HeapCompatibilityInformation,
     HeapEnableTerminationOnCorruption
 } HEAP_INFORMATION_CLASS;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* WINNT_TYPES_H */

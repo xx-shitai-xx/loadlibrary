@@ -27,13 +27,19 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <unistd.h>
+#include <signal.h>
 
-#include "log.h"
 #include "winnt_types.h"
 #include "pe_linker.h"
 #include "ntoskernel.h"
 #include "util.h"
 #include "hook.h"
+#include "log.h"
+#include "rsignal.h"
+#include "engineboot.h"
+#include "scanreply.h"
+#include "streambuffer.h"
+#include "openscan.h"
 
 #define xstr(s) str(s)
 #define str(s) #s
@@ -52,6 +58,37 @@ const char header[] =
     "   }                                                                   \n"
     "};";
 
+// Any usage limits to prevent bugs disrupting system.
+
+/*
+const struct rlimit kUsageLimits[] = {
+		[RLIMIT_FSIZE]  = { .rlim_cur = 0x20000000, .rlim_max = 0x20000000 },
+		[RLIMIT_CPU]    = { .rlim_cur = 3600,       .rlim_max = RLIM_INFINITY },
+		[RLIMIT_CORE]   = { .rlim_cur = 0,          .rlim_max = 0 },
+		[RLIMIT_NOFILE] = { .rlim_cur = 32,         .rlim_max = 32 },
+};
+*/
+
+struct JString{
+	unsigned char* buffer;
+	int length;
+};
+
+struct TJStringList {
+	struct JString** buf;
+	int count;
+
+	bool plainmem;
+	char* buffer;
+	unsigned int totalsize;
+};
+
+struct TList {
+	int count;
+	void** buf;
+};
+
+DWORD (* __rsignal)(PHANDLE KernelHandle, DWORD Code, PVOID Params, DWORD Size);
 // This structure appears to be 0xF4 bytes, used to configure the interpreter
 // object. I just accept most of the defaults, a few fields must be set. The
 // size must be exact, because it's passed *by value* to the routine at
@@ -208,11 +245,6 @@ PVOID resolve_callback_code(DWORD callback_code)
     return NULL;
 }
 
-struct JString {
-	int *tmpstart;
-	const char *buffer;
-	int length;
-};
 
 PVOID (*engine_GlobalStart)(PVOID callback, DWORD unknown);
 
@@ -221,11 +253,16 @@ PVOID (*graal_setHomeDirectory)(UCHAR *param);
 
 PVOID (*graal_setLogGraalMessage)(PVOID callback);
 
+struct JString* (*getGraalPassWord)();
+
+PVOID (*addbuffer)( PVOID string, unsigned char* text, int length);
+PVOID (*JString_new)( PVOID string);
+
 PCHAR (*getGraalScriptFunctions)(PVOID callback);
 
 PVOID (*initGraalScriptEnvironment)();
 
-PCHAR (*listScriptFunctions)();
+struct TJStringList* (*listScriptFunctions)();
 
 PHANDLE (*graal_engineInitialize)(UCHAR *param);
 
@@ -252,6 +289,20 @@ std::string ExePath() {
 }
 */
 
+EXCEPTION_DISPOSITION ExceptionHandler(struct _EXCEPTION_RECORD *ExceptionRecord,
+									   struct _EXCEPTION_FRAME *EstablisherFrame,
+									   struct _CONTEXT *ContextRecord,
+									   struct _EXCEPTION_FRAME **DispatcherContext)
+{
+	LogMessage("Toplevel Exception Handler Caught Exception");
+	abort();
+}
+
+VOID ResourceExhaustedHandler(int Signal)
+{
+	errx(EXIT_FAILURE, "Resource Limits Exhausted, Signal %s", strsignal(Signal));
+}
+
 int main(int argc, char **argv, char **envp)
 {
 	PIMAGE_DOS_HEADER DosHeader;
@@ -269,7 +320,7 @@ int main(int argc, char **argv, char **envp)
     };
 
 	graalprint("Enable pedantic heap checking.");
-    //mcheck_pedantic(0);
+    mcheck_pedantic(0);
 
 	graalprint("Load the scan engine");
     // Load the scan engine.
@@ -279,6 +330,7 @@ int main(int argc, char **argv, char **envp)
     }
 
     graalprint("Handle relocations, imports, etc");
+
 	link_pe_images(&image, 1);
 
 	// Fetch the headers to get base offsets.
@@ -303,9 +355,23 @@ int main(int argc, char **argv, char **envp)
 					   getpid(),
 					   "graalengine.map");
 			LogMessage("GDB: add-symbol-file symbols_%d.o 0", getpid());
-			__debugbreak();
+			//__debugbreak();
 		}
 	}
+
+
+
+	setup_nt_threadinfo(ExceptionHandler);
+
+	/*
+	// Install usage limits to prevent system crash.
+	setrlimit(RLIMIT_CORE, &kUsageLimits[RLIMIT_CORE]);
+	setrlimit(RLIMIT_CPU, &kUsageLimits[RLIMIT_CPU]);
+	setrlimit(RLIMIT_FSIZE, &kUsageLimits[RLIMIT_FSIZE]);
+	setrlimit(RLIMIT_NOFILE, &kUsageLimits[RLIMIT_NOFILE]);
+	*/
+	signal(SIGXCPU, ResourceExhaustedHandler);
+	signal(SIGXFSZ, ResourceExhaustedHandler);
 
 	graalprint("Get pointer for graal_setLogGraalMessage");
     if (get_export("graal_setLogGraalMessage", &graal_setLogGraalMessage)) {
@@ -341,22 +407,47 @@ int main(int argc, char **argv, char **envp)
         LogMessage("failed to resolve required module exports");
         return 1;
     }
+	getGraalPassWord = (void*)0x100d8cb0;
+	addbuffer = (void*)0x100571c0; // ?addbuffer@JString@@QAEXPBDH@Z
+/*
+	graalprint("Get pointer for getGraalScriptFunctions");
+	if (get_export("getGraalPassWord", &getGraalScriptFunctions)) {
+		LogMessage("failed to resolve required module exports (getGraalScriptFunctions)");
+		return 1;
+	}
+*/
 
 
 	graalprint("Set pointer for callback of graal logmessage");
 	graal_setLogGraalMessage(graalprint);
-//	initGraalScriptEnvironment();
-//	void* asd = listScriptFunctions();
+	//initGraalScriptEnvironment();
+	struct TJStringList* asd = listScriptFunctions();
 
-	//PCHAR test = getGraalScriptFunctions(0x0);
-    //graal_setHomeDirectory("c:");
+	//PCHAR test2 = getGraalScriptFunctions(0x0);
+	graal_setHomeDirectory = (void*)0x10085780;
+    //
+    struct TList* test3 = (void*)0x102a17dc;
+
+	memset(test3, 0, sizeof (struct TList));
+
+
+	printf("Buffer:\t%s\n", test3->buf);
+	test3->count = 1;
+	graal_setHomeDirectory("c:");
 //printf("sad: %p\n", asd);
 //asd();
 	graalprint ("Initialize graalengine: ");
     graal_engineInitialize("");
 	graalprint ("TEST8");
-
-    connectToGraalServer("","","");
+	struct JString* test = malloc (sizeof (struct JString));//getGraalPassWord();
+	JString_new = (void*)0x10056e80;
+	test->buffer = NULL;
+	//JString_new(&test);
+	printf("Pointer:\t%p\n", asd);
+	printf("Buffer:\t%s\n", test->buffer);
+	addbuffer(&test, "test", 4);
+	printf("Buffer2:\t%s\n", test->buffer);
+	//connectToGraalServer("","","");
 	graalprint ("TEST8");
 
 
